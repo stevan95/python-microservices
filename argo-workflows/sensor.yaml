@@ -1,0 +1,84 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: webhook
+spec:
+  template:
+    serviceAccountName: operate-workflow-sa
+  dependencies:
+    - name: test-dep
+      eventSourceName: webhook
+      eventName: example
+  triggers:
+    - template:
+        name: webhook-workflow-trigger
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: webhook-workflow-
+                labels:
+                  workflows.argoproj.io/archive-strategy: "false"
+              spec:
+                entrypoint: full
+                volumes:
+                - name: kaniko-secret
+                  secret:
+                    secretName: regcred
+                    items:
+                      - key: .dockerconfigjson
+                        path: config.json
+                templates:
+                - name: full
+                  dag:
+                    tasks:
+                    - name: build-container-image
+                      templateRef:
+                        name: container-image
+                        template: build-kaniko-git
+                        clusterScope: true
+                      arguments:
+                        parameters:
+                        - name: app_repo
+                          value: git://github.com/stevan95/python-microservices
+                        - name: container_image
+                          value: mstiv95/auth0
+                        - name: container_tag
+                          value: "latest"
+                    - name: deploy-staging
+                      template: echo
+                      arguments:
+                        parameters:
+                        - name: message
+                          value: Deploying to the staging cluster...
+                      dependencies:
+                      - build-container-image
+                    - name: tests
+                      template: echo
+                      arguments:
+                        parameters:
+                        - name: message
+                          value: Running integration tests (before, during, and after the deployment is finished)...
+                      dependencies:
+                      - build-container-image
+                    - name: deploy-production
+                      template: echo
+                      arguments:
+                        parameters:
+                        - name: message
+                          value: Deploying to the production cluster...
+                      dependencies:
+                      - tests
+                - name: echo
+                  inputs:
+                    parameters:
+                    - name: message
+                  container:
+                    image: alpine
+                    command: [echo]
+                    args:
+                    - "{{inputs.parameters.message}}"
+
